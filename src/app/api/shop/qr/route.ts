@@ -1,9 +1,35 @@
 import { NextResponse } from "next/server";
 import QRCode from "qrcode";
 import crypto from "node:crypto";
+import os from "node:os";
 import { db } from "@/lib/db";
 import { requireShopAuth } from "@/lib/auth";
 import { logAuditEvent } from "@/lib/security";
+
+function getLocalLanIps(): Array<{ name: string; address: string; isWifi: boolean }> {
+  const ifaces = os.networkInterfaces();
+  const list: Array<{ name: string; address: string; isWifi: boolean }> = [];
+
+  for (const name of Object.keys(ifaces)) {
+    const entries = ifaces[name];
+    if (!entries) continue;
+    for (const net of entries) {
+      if (net.family === "IPv4" && !net.internal && !net.address.startsWith("169.254.")) {
+        const isWifi = name.toLowerCase().includes("wi-fi") || name.toLowerCase().includes("wlan");
+        list.push({ name, address: net.address, isWifi });
+      }
+    }
+  }
+
+  // Sort so Wi-Fi is first, then standard private subnets
+  list.sort((a, b) => {
+    if (a.isWifi && !b.isWifi) return -1;
+    if (!a.isWifi && b.isWifi) return 1;
+    return 0;
+  });
+
+  return list;
+}
 
 export async function GET(request: Request) {
   try {
@@ -24,9 +50,33 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: "Shop not found" }, { status: 404 });
     }
 
-    const host = request.headers.get("host") || "localhost:3000";
+    const urlObj = new URL(request.url);
+    const customHost = urlObj.searchParams.get("customHost")?.trim();
+
+    const requestHost = request.headers.get("host") || "localhost:3000";
+    const port = requestHost.includes(":") ? requestHost.split(":")[1] : "3000";
     const protocol = request.headers.get("x-forwarded-proto") || "http";
-    const publicUrl = `${protocol}://${host}/p/${shop.public_token}`;
+
+    const lanIps = getLocalLanIps();
+    const primaryLanIp = lanIps[0]?.address || "127.0.0.1";
+
+    let targetHost = requestHost;
+
+    if (customHost) {
+      // User explicitly set custom host or domain
+      targetHost = customHost;
+    } else if (requestHost.startsWith("localhost") || requestHost.startsWith("127.0.0.1")) {
+      // Automatic Wi-Fi IP replacement for phone scanning!
+      // A phone scanning a localhost QR code cannot resolve localhost.
+      if (primaryLanIp && primaryLanIp !== "127.0.0.1") {
+        targetHost = `${primaryLanIp}:${port}`;
+      }
+    }
+
+    // Build the public customer URL
+    const publicUrl = targetHost.startsWith("http://") || targetHost.startsWith("https://")
+      ? `${targetHost.replace(/\/$/, "")}/p/${shop.public_token}`
+      : `${protocol}://${targetHost}/p/${shop.public_token}`;
 
     // Generate high-resolution QR PNG Data URL
     const qrDataUrl = await QRCode.toDataURL(publicUrl, {
@@ -50,6 +100,10 @@ export async function GET(request: Request) {
       shopName: shop.name,
       publicToken: shop.public_token,
       publicUrl,
+      targetHost,
+      primaryLanIp,
+      port,
+      lanIps,
       qrDataUrl,
       qrSvg,
     });
@@ -73,18 +127,12 @@ export async function POST(request: Request) {
 
     db.exec("BEGIN TRANSACTION;");
     try {
-      // Deactivate old QR records
       db.prepare("UPDATE shop_qr_codes SET is_active = 0 WHERE shop_id = ?").run(auth.shop.id);
-
-      // Insert new QR record
       db.prepare(`
         INSERT INTO shop_qr_codes (id, shop_id, token, is_active, created_at)
         VALUES (?, ?, ?, 1, ?)
       `).run(crypto.randomUUID(), auth.shop.id, newToken, now);
-
-      // Update shop's active token
       db.prepare("UPDATE shops SET public_token = ?, updated_at = ? WHERE id = ?").run(newToken, now, auth.shop.id);
-
       db.exec("COMMIT;");
     } catch (err) {
       db.exec("ROLLBACK;");

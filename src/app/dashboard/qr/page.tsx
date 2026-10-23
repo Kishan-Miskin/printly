@@ -11,12 +11,19 @@ import {
   ShieldCheck,
   Check,
   AlertTriangle,
+  Wifi,
+  Globe,
+  Info,
 } from "lucide-react";
 
 interface QRResponse {
   shopName: string;
   publicToken: string;
   publicUrl: string;
+  targetHost: string;
+  primaryLanIp: string;
+  port: string;
+  lanIps: Array<{ name: string; address: string; isWifi: boolean }>;
   qrDataUrl: string;
   qrSvg: string;
 }
@@ -27,13 +34,24 @@ export default function CounterQRPage() {
   const [copied, setCopied] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
 
-  const fetchQR = async () => {
+  const [selectedHost, setSelectedHost] = useState<string>("");
+  const [customHostInput, setCustomHostInput] = useState<string>("");
+
+  const fetchQR = async (overrideHost?: string) => {
     setLoading(true);
     try {
-      const res = await fetch("/api/shop/qr");
+      let url = "/api/shop/qr";
+      const hostToUse = overrideHost !== undefined ? overrideHost : selectedHost;
+      if (hostToUse) {
+        url += `?customHost=${encodeURIComponent(hostToUse)}`;
+      }
+      const res = await fetch(url);
       const json = await res.json();
       if (res.ok) {
         setData(json);
+        if (!selectedHost && json.targetHost) {
+          setSelectedHost(json.targetHost);
+        }
       }
     } catch (err) {
       console.error("Failed to fetch QR:", err);
@@ -45,6 +63,11 @@ export default function CounterQRPage() {
   useEffect(() => {
     fetchQR();
   }, []);
+
+  const handleApplyHost = (host: string) => {
+    setSelectedHost(host);
+    fetchQR(host);
+  };
 
   const handleCopyLink = () => {
     if (!data) return;
@@ -94,7 +117,7 @@ export default function CounterQRPage() {
     }
   };
 
-  if (loading) {
+  if (loading && !data) {
     return <div style={{ padding: 40, textAlign: "center" }} className="text-muted">Loading Counter QR...</div>;
   }
 
@@ -105,7 +128,7 @@ export default function CounterQRPage() {
   return (
     <div>
       {/* Title & Actions */}
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 28, flexWrap: "wrap" }} className="no-print">
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, marginBottom: 20, flexWrap: "wrap" }} className="no-print">
         <div>
           <h1 className="text-h1" style={{ fontSize: "1.75rem", marginBottom: 4 }}>
             Counter QR & Printable Poster
@@ -131,6 +154,35 @@ export default function CounterQRPage() {
         </div>
       </div>
 
+      {/* Mobile Wi-Fi Network Advisory Banner */}
+      <div
+        className="card no-print"
+        style={{
+          background: "rgba(59, 130, 246, 0.06)",
+          border: "1px solid rgba(59, 130, 246, 0.25)",
+          marginBottom: 24,
+          padding: 16,
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+          <Wifi size={20} style={{ color: "#60a5fa", flexShrink: 0, marginTop: 2 }} />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: "0.875rem", color: "#bfdbfe", marginBottom: 4 }}>
+              Connecting from Mobile Phone (Wi-Fi vs Cellular)
+            </div>
+            <p style={{ fontSize: "0.8125rem", color: "#d1d5db", lineHeight: 1.5, marginBottom: 10 }}>
+              Phones scanning a QR code cannot open <code>localhost</code> because on a mobile device, localhost refers to the phone itself.
+              PrintFlow automatically generated this QR code using your computer&apos;s Wi-Fi network address:{" "}
+              <strong style={{ color: "var(--primary)", fontFamily: "var(--font-mono)" }}>{data.publicUrl}</strong>.
+            </p>
+            <div style={{ fontSize: "0.75rem", color: "#9ca3af" }}>
+              ✓ <strong>For local testing:</strong> Ensure your phone is connected to the same Wi-Fi network as this PC.<br />
+              ✓ <strong>For mobile data (4G/5G) or production:</strong> Enter a public domain or tunnel URL below.
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Screen View Container */}
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 24 }} className="no-print">
         {/* Counter Poster Preview Card */}
@@ -152,17 +204,21 @@ export default function CounterQRPage() {
           <h2 style={{ fontSize: "1.75rem", fontWeight: 800, letterSpacing: "-0.02em", marginBottom: 4 }}>
             {data.shopName}
           </h2>
-          <p style={{ fontSize: "0.875rem", color: "#52525b", marginBottom: 24 }}>
+          <p style={{ fontSize: "0.875rem", color: "#52525b", marginBottom: 20 }}>
             Direct Digital Printing from Your Phone
           </p>
 
           {/* Large High-Res QR code */}
-          <div style={{ display: "inline-block", padding: 16, background: "#ffffff", border: "3px solid #000000", borderRadius: 16, marginBottom: 24 }}>
+          <div style={{ display: "inline-block", padding: 16, background: "#ffffff", border: "3px solid #000000", borderRadius: 16, marginBottom: 20 }}>
             <img
               src={data.qrDataUrl}
               alt="Counter Print QR"
               style={{ width: 220, height: 220, display: "block" }}
             />
+          </div>
+
+          <div style={{ fontSize: "0.75rem", color: "#71717a", fontFamily: "var(--font-mono)", marginBottom: 20, wordBreak: "break-all" }}>
+            {data.publicUrl}
           </div>
 
           {/* 4 Simple Steps */}
@@ -185,14 +241,80 @@ export default function CounterQRPage() {
 
         {/* Technical Details & Controls */}
         <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+          {/* Target Network Host Selector */}
+          <div className="card">
+            <h3 className="text-h3" style={{ fontSize: "1.0625rem", marginBottom: 8 }}>
+              QR Code Network Address
+            </h3>
+            <p className="text-muted" style={{ fontSize: "0.8125rem", marginBottom: 14 }}>
+              Choose which network address the QR code should point to:
+            </p>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+              {data.lanIps.map((ip) => {
+                const hostVal = `${ip.address}:${data.port}`;
+                const isSelected = data.targetHost === hostVal;
+                return (
+                  <button
+                    key={ip.address}
+                    type="button"
+                    onClick={() => handleApplyHost(hostVal)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      padding: "10px 14px",
+                      borderRadius: "var(--radius-md)",
+                      background: isSelected ? "var(--badge-bg)" : "var(--bg-subtle)",
+                      border: isSelected ? "1px solid var(--primary)" : "1px solid var(--border)",
+                      color: "var(--text)",
+                      textAlign: "left",
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 600, fontSize: "0.8125rem" }}>
+                        {ip.name} {ip.isWifi && "(Wi-Fi Recommended)"}
+                      </div>
+                      <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", fontFamily: "var(--font-mono)" }}>
+                        http://{hostVal}/p/{data.publicToken}
+                      </div>
+                    </div>
+                    {isSelected && <span className="badge badge-ready">Active</span>}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* Custom Host / Tunnel input */}
+            <div>
+              <label className="form-label" style={{ fontSize: "0.75rem" }}>
+                Or Use Custom Domain / Tunnel URL (e.g. ngrok or production domain)
+              </label>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input
+                  type="text"
+                  className="form-input font-mono"
+                  style={{ fontSize: "0.8125rem" }}
+                  placeholder="e.g. print.yourshop.com or abc.ngrok-free.app"
+                  value={customHostInput}
+                  onChange={(e) => setCustomHostInput(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  disabled={!customHostInput.trim()}
+                  onClick={() => handleApplyHost(customHostInput.trim())}
+                >
+                  Apply
+                </button>
+              </div>
+            </div>
+          </div>
+
           <div className="card">
             <h3 className="text-h3" style={{ fontSize: "1.0625rem", marginBottom: 12 }}>
               Public Counter Link
             </h3>
-            <p className="text-muted" style={{ fontSize: "0.875rem", marginBottom: 16 }}>
-              This link is encoded in the QR code. You can also share it via WhatsApp or place it on your Google Maps listing.
-            </p>
-
             <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
               <input
                 type="text"
