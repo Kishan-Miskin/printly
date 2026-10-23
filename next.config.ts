@@ -1,9 +1,11 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  /* config options here */
-  cacheComponents: true,
-  partialPrefetching: true,
+  serverExternalPackages: ["node:sqlite", "bcryptjs"],
+  // Enable modern optimizations
+  experimental: {
+    // any future flags
+  },
 };
 
 export default nextConfig;
