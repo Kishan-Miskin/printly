@@ -1,301 +1,90 @@
-"use client";
+import React from "react";
+import { queryOne, queryAll } from "@/lib/db";
+import OrderStatusClient, { PublicOrderData } from "./OrderStatusClient";
 
-import React, { useState, useEffect } from "react";
-import { useParams } from "next/navigation";
-import {
-  CheckCircle2,
-  Clock,
-  Printer,
-  PackageCheck,
-  AlertCircle,
-  ShieldAlert,
-  Loader2,
-  FileText,
-  MapPin,
-  Phone,
-} from "lucide-react";
+export default async function CustomerOrderStatusPage({
+  params,
+}: {
+  params: Promise<{ orderToken: string }>;
+}) {
+  const { orderToken } = await params;
 
-interface PublicOrder {
-  orderNumber: string;
-  status: "PENDING" | "ACCEPTED" | "PRINTING" | "READY" | "COMPLETED" | "REJECTED" | "CANCELLED";
-  customerName: string | null;
-  customerRequirements: string | null;
-  createdAt: string;
-  acceptedAt: string | null;
-  printingAt: string | null;
-  readyAt: string | null;
-  completedAt: string | null;
-  shop: {
-    name: string;
-    phone: string | null;
-    address: string | null;
-    hours: string | null;
-  };
-  files: Array<{
-    filename: string;
-    mimeType: string;
-    sizeBytes: number;
-    printColor: string;
-    paperSize: string;
-    duplex: string;
-    copies: number;
-    requirements: string | null;
-  }>;
-}
-
-export default function CustomerOrderStatusPage() {
-  const params = useParams();
-  const orderToken = params?.orderToken as string;
-
-  const [order, setOrder] = useState<PublicOrder | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
-
-  const fetchStatus = async () => {
-    try {
-      const res = await fetch(`/api/public/orders/${orderToken}`);
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "Order not found");
-      } else {
-        setOrder(data.order);
-      }
-    } catch {
-      setError("Failed to fetch order status");
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    if (orderToken) {
-      fetchStatus();
-      // Poll every 5 seconds while order is active
-      const interval = setInterval(() => {
-        fetchStatus();
-      }, 5000);
-      return () => clearInterval(interval);
-    }
-  }, [orderToken]);
-
-  if (loading) {
-    return (
-      <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center" }}>
-        <div style={{ textAlign: "center" }}>
-          <Loader2 className="animate-spin" size={36} style={{ color: "var(--text-muted)", margin: "0 auto 16px" }} />
-          <p className="text-muted">Loading order details...</p>
-        </div>
-      </div>
-    );
+  interface OrderDetailRow {
+    id: string;
+    public_order_number: string;
+    customer_name: string | null;
+    customer_requirements: string | null;
+    status: string;
+    created_at: string;
+    accepted_at: string | null;
+    printing_at: string | null;
+    ready_at: string | null;
+    completed_at: string | null;
+    shop_name: string;
+    shop_phone: string | null;
+    shop_address: string | null;
+    shop_hours: string | null;
   }
 
-  if (error || !order) {
-    return (
-      <div className="container-narrow" style={{ paddingTop: 80, textAlign: "center" }}>
-        <div className="card" style={{ borderColor: "var(--danger-border)" }}>
-          <AlertCircle size={48} style={{ color: "var(--danger)", margin: "0 auto 16px" }} />
-          <h1 className="text-h2" style={{ marginBottom: 12 }}>Order Not Found</h1>
-          <p className="text-muted">{error || "This order link may be invalid or expired."}</p>
-        </div>
-      </div>
-    );
+  const orderRow = queryOne<OrderDetailRow>(`
+    SELECT 
+      o.id, o.public_order_number, o.customer_name, o.customer_requirements,
+      o.status, o.created_at, o.accepted_at, o.printing_at, o.ready_at, o.completed_at,
+      sh.name as shop_name, sh.phone as shop_phone, sh.address as shop_address, sh.hours as shop_hours
+    FROM orders o
+    JOIN shops sh ON o.shop_id = sh.id
+    WHERE o.public_access_token = ?
+  `, orderToken);
+
+  let initialOrder: PublicOrderData | null = null;
+
+  if (orderRow) {
+    interface FileSummaryRow {
+      original_filename: string;
+      mime_type: string;
+      size_bytes: number;
+      print_color: string;
+      paper_size: string;
+      duplex: string;
+      copies: number;
+      customer_requirements: string | null;
+    }
+
+    const files = queryAll<FileSummaryRow>(`
+      SELECT original_filename, mime_type, size_bytes, print_color, paper_size, duplex, copies, customer_requirements
+      FROM order_files
+      WHERE order_id = ?
+      ORDER BY created_at ASC
+    `, orderRow.id);
+
+    initialOrder = {
+      orderNumber: orderRow.public_order_number,
+      status: orderRow.status as PublicOrderData["status"],
+      customerName: orderRow.customer_name,
+      customerRequirements: orderRow.customer_requirements,
+      createdAt: orderRow.created_at,
+      acceptedAt: orderRow.accepted_at,
+      printingAt: orderRow.printing_at,
+      readyAt: orderRow.ready_at,
+      completedAt: orderRow.completed_at,
+      shop: {
+        name: orderRow.shop_name,
+        phone: orderRow.shop_phone,
+        address: orderRow.shop_address,
+        hours: orderRow.shop_hours,
+      },
+      files: files.map((f) => ({
+        filename: f.original_filename,
+        mimeType: f.mime_type,
+        sizeBytes: f.size_bytes,
+        printColor: f.print_color,
+        paperSize: f.paper_size,
+        duplex: f.duplex,
+        copies: f.copies,
+        requirements: f.customer_requirements,
+      })),
+    };
   }
 
-  const steps = [
-    { key: "PENDING", label: "Submitted", desc: "Waiting for shop acceptance" },
-    { key: "ACCEPTED", label: "Accepted", desc: "Queued for printing" },
-    { key: "PRINTING", label: "Printing", desc: "Machine running" },
-    { key: "READY", label: "Ready for Pickup", desc: "Visit counter" },
-    { key: "COMPLETED", label: "Completed", desc: "Handover finished" },
-  ];
-
-  const statusOrder = ["PENDING", "ACCEPTED", "PRINTING", "READY", "COMPLETED"];
-  const currentIndex = statusOrder.indexOf(order.status);
-  const isTerminal = order.status === "REJECTED" || order.status === "CANCELLED";
-
-  return (
-    <div className="container-narrow" style={{ paddingTop: 36, paddingBottom: 60 }}>
-      {/* Top Shop Info */}
-      <div style={{ textAlign: "center", marginBottom: 28 }}>
-        <span className="text-dim" style={{ fontSize: "0.8125rem", textTransform: "uppercase", letterSpacing: "0.08em" }}>
-          PRINT ORDER TRACKER
-        </span>
-        <h1 className="text-h1" style={{ fontSize: "1.75rem", marginTop: 4, marginBottom: 8 }}>
-          {order.shop.name}
-        </h1>
-        {order.shop.address && (
-          <p className="text-dim" style={{ fontSize: "0.875rem", display: "flex", alignItems: "center", justifyContent: "center", gap: 6 }}>
-            <MapPin size={14} />
-            {order.shop.address}
-          </p>
-        )}
-      </div>
-
-      {/* Prominent READY Banner */}
-      {order.status === "READY" && (
-        <div
-          className="card glow-ready"
-          style={{
-            background: "rgba(16, 185, 129, 0.08)",
-            border: "2px solid var(--success)",
-            marginBottom: 24,
-            textAlign: "center",
-            padding: 28,
-          }}
-        >
-          <div style={{ display: "inline-flex", padding: 12, borderRadius: "50%", background: "var(--success-bg)", marginBottom: 12 }}>
-            <PackageCheck size={40} style={{ color: "var(--success)" }} />
-          </div>
-          <h2 className="text-h2" style={{ color: "var(--success)", marginBottom: 6 }}>
-            YOUR DOCUMENTS ARE READY!
-          </h2>
-          <p className="text-muted" style={{ marginBottom: 20 }}>
-            Please visit the counter and present your Order ID and 6-digit Pickup PIN to collect your prints.
-          </p>
-
-          <div style={{ display: "inline-block", background: "#000", border: "1px solid #3f3f46", padding: "10px 24px", borderRadius: "var(--radius-md)" }}>
-            <span className="text-dim" style={{ fontSize: "0.75rem", textTransform: "uppercase", letterSpacing: "0.08em", display: "block" }}>
-              ORDER ID
-            </span>
-            <span style={{ fontSize: "1.75rem", fontWeight: 800, fontFamily: "var(--font-mono)" }}>
-              {order.orderNumber}
-            </span>
-          </div>
-        </div>
-      )}
-
-      {/* COMPLETED Banner */}
-      {order.status === "COMPLETED" && (
-        <div
-          className="card"
-          style={{
-            background: "rgba(255, 255, 255, 0.03)",
-            border: "1px solid var(--border)",
-            marginBottom: 24,
-            textAlign: "center",
-            padding: 24,
-          }}
-        >
-          <CheckCircle2 size={36} style={{ color: "var(--text-muted)", margin: "0 auto 12px" }} />
-          <h2 className="text-h2" style={{ fontSize: "1.25rem", marginBottom: 6 }}>
-            Order Completed & Handed Over
-          </h2>
-          <p className="text-muted" style={{ fontSize: "0.875rem" }}>
-            Documents have been safely collected at the counter. Uploaded files will be automatically deleted according to the retention policy.
-          </p>
-        </div>
-      )}
-
-      {/* Order Status Timeline */}
-      <div className="card" style={{ marginBottom: 24 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 }}>
-          <div>
-            <span className="text-dim" style={{ fontSize: "0.75rem", textTransform: "uppercase" }}>Order Number</span>
-            <div style={{ fontSize: "1.25rem", fontWeight: 800, fontFamily: "var(--font-mono)" }}>{order.orderNumber}</div>
-          </div>
-          <div className={`badge badge-${order.status.toLowerCase()}`}>
-            {order.status}
-          </div>
-        </div>
-
-        {!isTerminal ? (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            {steps.map((step, idx) => {
-              const isDone = currentIndex >= idx;
-              const isCurrent = currentIndex === idx;
-
-              return (
-                <div key={step.key} style={{ display: "flex", alignItems: "flex-start", gap: 14 }}>
-                  <div
-                    style={{
-                      width: 28,
-                      height: 28,
-                      borderRadius: "50%",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: "0.75rem",
-                      fontWeight: 700,
-                      background: isCurrent ? "var(--primary)" : isDone ? "var(--success)" : "var(--badge-bg)",
-                      color: isCurrent ? "#000" : isDone ? "#000" : "var(--text-dim)",
-                      border: isDone || isCurrent ? "none" : "1px solid var(--border)",
-                      flexShrink: 0,
-                    }}
-                  >
-                    {isDone && !isCurrent ? "✓" : idx + 1}
-                  </div>
-
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 600, fontSize: "0.9375rem", color: isCurrent ? "var(--text)" : isDone ? "var(--text)" : "var(--text-dim)" }}>
-                      {step.label}
-                    </div>
-                    <div style={{ fontSize: "0.8125rem", color: "var(--text-dim)" }}>{step.desc}</div>
-                  </div>
-
-                  {isCurrent && (
-                    <span className="badge badge-pending" style={{ fontSize: "0.6875rem" }}>
-                      In Progress
-                    </span>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <div style={{ background: "var(--danger-bg)", border: "1px solid var(--danger-border)", borderRadius: "var(--radius-md)", padding: 14, color: "var(--danger)" }}>
-            <ShieldAlert size={20} style={{ marginBottom: 6 }} />
-            <div style={{ fontWeight: 600 }}>This order has been {order.status.toLowerCase()}</div>
-          </div>
-        )}
-      </div>
-
-      {/* Documents Summary */}
-      <div className="card" style={{ marginBottom: 24 }}>
-        <h3 className="text-h3" style={{ fontSize: "1rem", marginBottom: 12 }}>
-          Documents in Order ({order.files.length})
-        </h3>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {order.files.map((file, i) => (
-            <div key={i} className="card-subtle" style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
-              <FileText size={20} style={{ color: "var(--text-muted)", marginTop: 2 }} />
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 600, fontSize: "0.875rem" }}>{file.filename}</div>
-                <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 2 }}>
-                  {file.printColor === "COLOR" ? "Color" : "B&W"} • {file.paperSize} • {file.duplex === "DOUBLE" ? "Double-sided" : "Single-sided"} • {file.copies} copies
-                </div>
-                {file.requirements && (
-                  <div style={{ fontSize: "0.75rem", color: "#fef08a", marginTop: 4 }}>
-                    Note: &ldquo;{file.requirements}&rdquo;
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-
-        {order.customerRequirements && (
-          <div style={{ marginTop: 16, background: "var(--bg-subtle)", border: "1px solid var(--border)", borderRadius: "var(--radius-md)", padding: 12 }}>
-            <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", textTransform: "uppercase", marginBottom: 4 }}>
-              Order Requirements
-            </div>
-            <div style={{ fontSize: "0.875rem" }}>{order.customerRequirements}</div>
-          </div>
-        )}
-      </div>
-
-      {/* Customer Reminder */}
-      <div className="card-subtle" style={{ textAlign: "center" }}>
-        <div style={{ fontSize: "0.8125rem", color: "var(--text-muted)", marginBottom: 8 }}>
-          Need assistance with this order? Contact the counter directly:
-        </div>
-        {order.shop.phone && (
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 600, fontSize: "0.9375rem" }}>
-            <Phone size={14} />
-            {order.shop.phone}
-          </div>
-        )}
-      </div>
-    </div>
-  );
+  return <OrderStatusClient orderToken={orderToken} initialOrder={initialOrder} />;
 }

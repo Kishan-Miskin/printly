@@ -59,6 +59,14 @@ function initSchema(db: DatabaseSync) {
       is_open INTEGER NOT NULL DEFAULT 1,
       public_token TEXT UNIQUE NOT NULL,
       settings TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      city TEXT DEFAULT '',
+      locality TEXT DEFAULT '',
+      listed INTEGER NOT NULL DEFAULT 1,
+      active INTEGER NOT NULL DEFAULT 1,
+      logo_url TEXT,
+      latitude REAL,
+      longitude REAL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     );
@@ -83,6 +91,7 @@ function initSchema(db: DatabaseSync) {
       customer_pin_hash TEXT NOT NULL,
       customer_requirements TEXT,
       status TEXT NOT NULL DEFAULT 'PENDING' CHECK(status IN ('PENDING', 'ACCEPTED', 'PRINTING', 'READY', 'COMPLETED', 'REJECTED', 'CANCELLED')),
+      source TEXT NOT NULL DEFAULT 'QR' CHECK(source IN ('QR', 'DIRECTORY', 'DIRECT')),
       idempotency_key TEXT,
       created_at TEXT NOT NULL,
       accepted_at TEXT,
@@ -168,24 +177,67 @@ function initSchema(db: DatabaseSync) {
       expires_at TEXT NOT NULL
     );
 
-    -- Indices for high performance and isolation
+    -- Base Indices for high performance
+    CREATE INDEX IF NOT EXISTS idx_shops_slug ON shops(slug);
+    CREATE INDEX IF NOT EXISTS idx_shops_public_token ON shops(public_token);
     CREATE INDEX IF NOT EXISTS idx_orders_shop_id ON orders(shop_id);
     CREATE INDEX IF NOT EXISTS idx_orders_public_order_number ON orders(public_order_number);
     CREATE INDEX IF NOT EXISTS idx_orders_public_access_token ON orders(public_access_token);
     CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status);
     CREATE INDEX IF NOT EXISTS idx_orders_created_at ON orders(created_at);
     CREATE INDEX IF NOT EXISTS idx_orders_idempotency ON orders(shop_id, idempotency_key);
-
     CREATE INDEX IF NOT EXISTS idx_order_files_order_id ON order_files(order_id);
     CREATE INDEX IF NOT EXISTS idx_order_files_shop_id ON order_files(shop_id);
-
     CREATE INDEX IF NOT EXISTS idx_shop_members_shop_id ON shop_members(shop_id);
     CREATE INDEX IF NOT EXISTS idx_shop_members_user_id ON shop_members(user_id);
-
     CREATE INDEX IF NOT EXISTS idx_sessions_token ON sessions(session_token);
     CREATE INDEX IF NOT EXISTS idx_pickup_verif_order ON pickup_verifications(order_id);
     CREATE INDEX IF NOT EXISTS idx_audit_logs_shop ON audit_logs(shop_id);
   `);
+
+  // Safe runtime migrations for existing databases
+  const shopMigrations = [
+    "ALTER TABLE shops ADD COLUMN description TEXT DEFAULT ''",
+    "ALTER TABLE shops ADD COLUMN city TEXT DEFAULT ''",
+    "ALTER TABLE shops ADD COLUMN locality TEXT DEFAULT ''",
+    "ALTER TABLE shops ADD COLUMN listed INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE shops ADD COLUMN active INTEGER NOT NULL DEFAULT 1",
+    "ALTER TABLE shops ADD COLUMN logo_url TEXT",
+    "ALTER TABLE shops ADD COLUMN latitude REAL",
+    "ALTER TABLE shops ADD COLUMN longitude REAL",
+  ];
+  for (const sql of shopMigrations) {
+    try {
+      db.exec(sql);
+    } catch {
+      // Column already exists
+    }
+  }
+
+  const orderMigrations = [
+    "ALTER TABLE orders ADD COLUMN source TEXT NOT NULL DEFAULT 'QR'",
+  ];
+  for (const sql of orderMigrations) {
+    try {
+      db.exec(sql);
+    } catch {
+      // Column already exists
+    }
+  }
+
+  // Create indexes on migrated columns now that columns definitely exist
+  const migratedIndices = [
+    "CREATE INDEX IF NOT EXISTS idx_shops_discovery ON shops(listed, active, is_open)",
+    "CREATE INDEX IF NOT EXISTS idx_shops_city ON shops(city)",
+    "CREATE INDEX IF NOT EXISTS idx_orders_source ON orders(source)",
+  ];
+  for (const idxSql of migratedIndices) {
+    try {
+      db.exec(idxSql);
+    } catch {
+      // Ignore if index already exists
+    }
+  }
 }
 
 export const db = getDatabase();

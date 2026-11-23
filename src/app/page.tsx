@@ -1,239 +1,480 @@
 "use client";
 
-import React from "react";
+import React, { useState, useEffect } from "react";
 import Link from "next/link";
 import {
   Printer,
-  QrCode,
-  ShieldCheck,
-  FileCheck2,
-  Lock,
-  ArrowRight,
-  CheckCircle2,
+  Search,
+  MapPin,
   Clock,
-  Layers,
+  ArrowRight,
+  QrCode,
   Sparkles,
-  ChevronRight,
-  KeyRound,
-  FileText,
+  Download,
+  AlertCircle,
+  Loader2,
+  CheckCircle2,
+  FileUp,
+  Navigation,
 } from "lucide-react";
+import { InstallPwaButton, usePwa } from "@/components/PwaManager";
+import { ThemeToggle } from "@/components/ThemeManager";
+
+interface PrintCenter {
+  name: string;
+  slug: string;
+  publicToken: string;
+  description: string;
+  city: string;
+  locality: string;
+  hours: string;
+  isOpen: boolean;
+  services: string[];
+  uploadUrl: string;
+  distanceFormatted?: string;
+  distanceKm?: number;
+}
 
 export default function HomePage() {
+  const [centers, setCenters] = useState<PrintCenter[]>([]);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [searchQuery, setSearchQuery] = useState<string>("");
+  const [locationStatus, setLocationStatus] = useState<string>("");
+  const [userCoords, setUserCoords] = useState<{ lat: number; lng: number } | null>(null);
+  const [distanceFilter, setDistanceFilter] = useState<number | null>(null);
+  const { canInstall, isIos, isInstalled, promptInstall, setShowIosGuide } = usePwa();
+
+  const fetchCenters = async (q = "", coords = userCoords, maxDist = distanceFilter) => {
+    setLoading(true);
+    try {
+      let url = "/api/print-centers?limit=6";
+      if (q.trim()) {
+        url += `&q=${encodeURIComponent(q.trim())}`;
+      }
+      if (coords) {
+        url += `&lat=${coords.lat}&lng=${coords.lng}&nearby=1`;
+      }
+      if (maxDist !== null) {
+        url += `&maxDistance=${maxDist}`;
+      }
+      const res = await fetch(url);
+      const data = await res.json();
+      if (res.ok) {
+        setCenters(data.centers || []);
+      }
+    } catch (err) {
+      console.error("Failed to load centers:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchCenters();
+  }, []);
+
+  // Debounced search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchCenters(searchQuery, userCoords, distanceFilter);
+    }, 250);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  const handleNearMe = () => {
+    if (!navigator.geolocation) {
+      setLocationStatus("Geolocation is not supported by your browser");
+      return;
+    }
+    setLocationStatus("Detecting location...");
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+        setUserCoords(coords);
+        setLocationStatus("Sorted by distance from your location");
+        fetchCenters(searchQuery, coords, distanceFilter);
+      },
+      () => {
+        // Fallback default coordinates for Belagavi demo area
+        const demoCoords = { lat: 15.8600, lng: 74.5050 };
+        setUserCoords(demoCoords);
+        setLocationStatus("Showing nearby centers around Belagavi");
+        fetchCenters(searchQuery, demoCoords, distanceFilter);
+      },
+      { timeout: 5000 }
+    );
+  };
+
   return (
-    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+    <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column", background: "var(--bg)" }}>
       {/* Top Navbar */}
       <header
         style={{
           borderBottom: "1px solid var(--border)",
-          padding: "16px 24px",
-          background: "rgba(9, 9, 11, 0.8)",
-          backdropFilter: "blur(8px)",
+          padding: "14px 20px",
+          background: "var(--card)",
           position: "sticky",
           top: 0,
-          zIndex: 50,
+          zIndex: 40,
         }}
       >
         <div className="container" style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <div style={{ padding: 6, borderRadius: "var(--radius-sm)", background: "var(--primary)", color: "#000" }}>
-              <Printer size={20} />
+          <Link href="/" style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <div style={{ padding: 6, borderRadius: "var(--radius-sm)", background: "var(--primary)", color: "var(--primary-foreground)" }}>
+              <Printer size={18} />
             </div>
-            <span style={{ fontWeight: 800, fontSize: "1.25rem", letterSpacing: "-0.03em" }}>
+            <span style={{ fontWeight: 800, fontSize: "1.2rem", letterSpacing: "-0.03em" }}>
               PrintFlow
             </span>
-            <span className="badge" style={{ fontSize: "0.6875rem" }}>B2B SaaS</span>
-          </div>
+          </Link>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <Link href="/p/apex-prints-demo" className="btn btn-ghost btn-sm" target="_blank">
-              Live Customer QR Demo
-            </Link>
-            <Link href="/login" className="btn btn-secondary btn-sm">
-              Operator Sign In
-            </Link>
-            <Link href="/register" className="btn btn-primary btn-sm">
-              Register Shop
+          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+            <ThemeToggle />
+            <InstallPwaButton label="Install App" className="btn btn-secondary btn-sm" />
+            <Link href="/login" className="btn btn-ghost btn-sm" style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>
+              Shop Sign In
             </Link>
           </div>
         </div>
       </header>
 
-      {/* Hero Section */}
-      <section style={{ padding: "80px 20px 60px", textAlign: "center" }}>
-        <div className="container" style={{ maxWidth: 880 }}>
-          <div style={{ display: "inline-flex", alignItems: "center", gap: 8, padding: "6px 14px", borderRadius: 9999, background: "var(--badge-bg)", border: "1px solid var(--border)", marginBottom: 24 }}>
-            <ShieldCheck size={16} style={{ color: "var(--success)" }} />
-            <span style={{ fontSize: "0.8125rem", fontWeight: 600 }}>Engineered for Physical Counter Safety</span>
-          </div>
-
-          <h1 className="text-h1" style={{ fontSize: "clamp(2.25rem, 5vw, 3.75rem)", marginBottom: 20 }}>
-            Digital Counter Workflow for Xerox & Print Shops
-          </h1>
-
-          <p className="text-muted" style={{ fontSize: "clamp(1rem, 2vw, 1.25rem)", lineHeight: 1.6, marginBottom: 36, maxWidth: 700, margin: "0 auto 36px" }}>
-            The end customer scans your unique counter QR code, uploads documents with exact quality preservation, specifies print requirements, and collects documents using a secure 6-digit Pickup PIN.
-          </p>
-
-          <div style={{ display: "flex", justifyContent: "center", gap: 14, flexWrap: "wrap", marginBottom: 48 }}>
-            <Link href="/login" className="btn btn-primary btn-lg">
-              Open Shop Terminal
-              <ArrowRight size={18} />
-            </Link>
-            <Link href="/p/apex-prints-demo" className="btn btn-secondary btn-lg" target="_blank">
-              Test Customer Scan Experience
-            </Link>
-          </div>
-
-          {/* Interactive Flow Diagram */}
+      {/* Hero: Customer Discovery & Direct Start */}
+      <main className="container-narrow" style={{ paddingTop: 36, paddingBottom: 60, flex: 1 }}>
+        <div style={{ textAlign: "center", marginBottom: 32 }}>
           <div
-            className="card"
             style={{
-              padding: "24px 20px",
-              background: "rgba(255, 255, 255, 0.02)",
-              borderColor: "var(--border)",
-              textAlign: "left",
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "4px 12px",
+              borderRadius: 9999,
+              background: "var(--badge-bg)",
+              border: "1px solid var(--border)",
+              fontSize: "0.75rem",
+              fontWeight: 600,
+              color: "var(--primary)",
+              marginBottom: 16,
             }}
           >
-            <div style={{ fontSize: "0.75rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--text-dim)", marginBottom: 16 }}>
-              CORE COUNTER FLOW
-            </div>
+            <Sparkles size={14} />
+            <span>Send once. Come once. Done.</span>
+          </div>
 
-            <div
+          <h1 className="text-h1" style={{ fontSize: "clamp(2rem, 5vw, 2.75rem)", marginBottom: 12 }}>
+            Send documents to a print center
+          </h1>
+          <p className="text-muted" style={{ fontSize: "clamp(0.9375rem, 2vw, 1.0625rem)", maxWidth: 520, margin: "0 auto" }}>
+            Upload before you arrive. We&apos;ll notify you when your documents are ready for counter pickup.
+          </p>
+        </div>
+
+        {/* Live Search Input & Near Me Button */}
+        <div style={{ marginBottom: 20 }}>
+          <div
+            style={{
+              position: "relative",
+              display: "flex",
+              alignItems: "center",
+              background: "var(--card)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-lg)",
+              padding: "4px 6px 4px 16px",
+              boxShadow: "var(--shadow-sm)",
+            }}
+          >
+            <Search size={18} style={{ color: "var(--text-dim)", marginRight: 10, flexShrink: 0 }} />
+            <input
+              type="text"
+              placeholder="Search a print center (e.g. Apex Xerox, College Road)..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
               style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
-                gap: 12,
+                width: "100%",
+                background: "transparent",
+                border: "none",
+                color: "var(--text)",
+                fontSize: "0.9375rem",
+                outline: "none",
+                padding: "10px 0",
+              }}
+            />
+            {loading && <Loader2 size={16} className="spin" style={{ color: "var(--text-dim)", marginRight: 8 }} />}
+
+            <button
+              type="button"
+              onClick={handleNearMe}
+              className="btn btn-secondary btn-sm"
+              style={{ display: "inline-flex", alignItems: "center", gap: 6, flexShrink: 0, padding: "8px 12px" }}
+              title="Find shops nearest to your current location"
+            >
+              <Navigation size={14} style={{ color: "var(--primary)" }} />
+              <span>Near Me</span>
+            </button>
+          </div>
+
+          {locationStatus && (
+            <div style={{ fontSize: "0.75rem", color: "var(--text-muted)", marginTop: 6, paddingLeft: 8, display: "flex", alignItems: "center", gap: 4 }}>
+              <MapPin size={12} style={{ color: "var(--primary)" }} />
+              <span>{locationStatus}</span>
+            </div>
+          )}
+        </div>
+
+        {/* Nearby / Popular Section */}
+        <div style={{ marginBottom: 36 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+            <span style={{ fontSize: "0.8125rem", fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.06em", color: "var(--text-dim)" }}>
+              {searchQuery ? "SEARCH RESULTS" : "NEARBY PRINT CENTERS"}
+            </span>
+
+            <Link href="/print-centers" style={{ fontSize: "0.8125rem", color: "var(--primary)", fontWeight: 600 }}>
+              View all centers →
+            </Link>
+          </div>
+
+          {centers.length === 0 && !loading ? (
+            <div
+              className="card"
+              style={{
+                padding: "40px 24px",
+                textAlign: "center",
+                border: "1px dashed var(--border)",
               }}
             >
-              {[
-                { step: "1. SCAN", desc: "Customer scans shop QR" },
-                { step: "2. UPLOAD", desc: "PDF, Word, or JPG" },
-                { step: "3. SPECS", desc: "B&W/Color & Special Notes" },
-                { step: "4. ORDER ID", desc: "PF-48291 + 6-digit PIN" },
-                { step: "5. PRINT", desc: "Shop prints original" },
-                { step: "6. VERIFY", desc: "PIN verification at counter" },
-                { step: "7. HANDOVER", desc: "Correct documents delivered" },
-              ].map((item, idx) => (
-                <div key={idx} className="card-subtle" style={{ padding: 12 }}>
-                  <div style={{ fontWeight: 800, fontSize: "0.875rem", color: "var(--primary)" }}>{item.step}</div>
-                  <div style={{ fontSize: "0.75rem", color: "var(--text-dim)", marginTop: 4 }}>{item.desc}</div>
+              <AlertCircle size={32} style={{ color: "var(--warning)", margin: "0 auto 12px" }} />
+              <h2 className="text-h3" style={{ fontSize: "1.125rem", marginBottom: 6 }}>No print centers found</h2>
+              <p className="text-muted" style={{ fontSize: "0.875rem", marginBottom: 16 }}>
+                Try another shop name, area or clear your search term.
+              </p>
+              {searchQuery && (
+                <button
+                  type="button"
+                  className="btn btn-secondary btn-sm"
+                  onClick={() => setSearchQuery("")}
+                >
+                  Clear Search
+                </button>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              {centers.map((center) => (
+                <div
+                  key={center.slug}
+                  className="card"
+                  style={{
+                    padding: "18px 20px",
+                    background: "var(--card)",
+                    border: "1px solid var(--border)",
+                    borderRadius: "var(--radius-lg)",
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 12,
+                  }}
+                >
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+                    <div>
+                      <h2 className="text-h2" style={{ fontSize: "1.125rem", marginBottom: 3 }}>
+                        {center.name}
+                      </h2>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: "0.8125rem", color: "var(--text-muted)", flexWrap: "wrap" }}>
+                        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                          <MapPin size={13} style={{ color: "var(--text-dim)" }} />
+                          <span>{center.locality ? `${center.locality}, ${center.city}` : center.city}</span>
+                        </div>
+                        {center.distanceFormatted && (
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 3,
+                              padding: "2px 6px",
+                              borderRadius: 4,
+                              background: "var(--badge-bg)",
+                              color: "var(--primary)",
+                              fontWeight: 700,
+                              fontSize: "0.6875rem",
+                            }}
+                          >
+                            📍 {center.distanceFormatted} away
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 5,
+                        padding: "3px 8px",
+                        borderRadius: 9999,
+                        fontSize: "0.6875rem",
+                        fontWeight: 700,
+                        background: center.isOpen ? "var(--success-bg)" : "var(--badge-bg)",
+                        color: center.isOpen ? "var(--success)" : "var(--text-dim)",
+                        border: center.isOpen ? "1px solid var(--success-border)" : "1px solid var(--border)",
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 6,
+                          height: 6,
+                          borderRadius: "50%",
+                          background: center.isOpen ? "var(--success)" : "var(--text-dim)",
+                        }}
+                      />
+                      <span>{center.isOpen ? "Open" : "Closed"}</span>
+                    </span>
+                  </div>
+
+                  <p style={{ fontSize: "0.8125rem", color: "var(--text-muted)", margin: 0, lineHeight: 1.4 }}>
+                    {center.description}
+                  </p>
+
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 4, flexWrap: "wrap", gap: 10 }}>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {center.services.slice(0, 3).map((srv) => (
+                        <span
+                          key={srv}
+                          style={{
+                            fontSize: "0.6875rem",
+                            padding: "2px 6px",
+                            borderRadius: 4,
+                            background: "var(--bg-subtle)",
+                            border: "1px solid var(--border)",
+                            color: "var(--text-dim)",
+                          }}
+                        >
+                          {srv}
+                        </span>
+                      ))}
+                    </div>
+
+                    {/* Direct 1-tap Upload CTA */}
+                    <Link
+                      href={center.uploadUrl}
+                      className="btn btn-primary btn-sm"
+                      style={{ fontWeight: 700, padding: "8px 16px" }}
+                    >
+                      <span>Upload here</span>
+                      <ArrowRight size={14} />
+                    </Link>
+                  </div>
                 </div>
               ))}
             </div>
-          </div>
+          )}
         </div>
-      </section>
 
-      {/* Core Architectural Pillars */}
-      <section style={{ padding: "60px 20px", background: "var(--bg-subtle)", borderTop: "1px solid var(--border)", borderBottom: "1px solid var(--border)" }}>
-        <div className="container">
-          <div style={{ textAlign: "center", marginBottom: 48 }}>
-            <h2 className="text-h2" style={{ fontSize: "2rem", marginBottom: 10 }}>
-              Zero Friction. Maximum Security.
-            </h2>
-            <p className="text-muted" style={{ maxWidth: 600, margin: "0 auto" }}>
-              Tailored specifically for busy printing shop operations where speed, document integrity, and privacy are paramount.
-            </p>
-          </div>
-
+        {/* Section: Have a shop QR? */}
+        <div
+          className="card"
+          style={{
+            padding: "20px 24px",
+            background: "var(--bg-subtle)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--radius-lg)",
+            display: "flex",
+            alignItems: "center",
+            gap: 16,
+            marginBottom: 24,
+          }}
+        >
           <div
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-              gap: 24,
+              width: 44,
+              height: 44,
+              borderRadius: "var(--radius-md)",
+              background: "var(--card)",
+              border: "1px solid var(--border)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
             }}
           >
-            {/* Pillar 1 */}
-            <div className="card">
-              <div style={{ padding: 12, borderRadius: "var(--radius-md)", background: "var(--badge-bg)", width: "fit-content", marginBottom: 16 }}>
-                <KeyRound size={24} style={{ color: "var(--success)" }} />
-              </div>
-              <h3 className="text-h3" style={{ fontSize: "1.25rem", marginBottom: 8 }}>
-                Pickup PIN Handover Security
-              </h3>
-              <p className="text-muted" style={{ fontSize: "0.875rem", lineHeight: 1.6, marginBottom: 16 }}>
-                Prevents accidental wrong-document handovers. Knowing an Order ID alone is never sufficient. The shop operator must enter the customer&apos;s 6-digit Pickup PIN, verified server-side with rate limiting, before an order can be completed.
-              </p>
-              <div className="badge badge-ready">Cryptographic PIN Verification</div>
-            </div>
+            <QrCode size={22} style={{ color: "var(--primary)" }} />
+          </div>
 
-            {/* Pillar 2 */}
-            <div className="card">
-              <div style={{ padding: 12, borderRadius: "var(--radius-md)", background: "var(--badge-bg)", width: "fit-content", marginBottom: 16 }}>
-                <FileCheck2 size={24} style={{ color: "#3b82f6" }} />
-              </div>
-              <h3 className="text-h3" style={{ fontSize: "1.25rem", marginBottom: 8 }}>
-                Untouched Original Document Preservation
-              </h3>
-              <p className="text-muted" style={{ fontSize: "0.875rem", lineHeight: 1.6, marginBottom: 16 }}>
-                Customer originals are NEVER downscaled, compressed, converted to WebP, or rebuilt. The downloadable print file downloaded by the shop has the exact byte-level SHA-256 integrity of the customer&apos;s original submission.
-              </p>
-              <div className="badge badge-accepted">Exact Byte Preservation</div>
+          <div style={{ flex: 1 }}>
+            <div style={{ fontWeight: 700, fontSize: "0.9375rem", marginBottom: 2 }}>
+              Have a shop counter QR code?
             </div>
-
-            {/* Pillar 3 */}
-            <div className="card">
-              <div style={{ padding: 12, borderRadius: "var(--radius-md)", background: "var(--badge-bg)", width: "fit-content", marginBottom: 16 }}>
-                <Lock size={24} style={{ color: "#c084fc" }} />
-              </div>
-              <h3 className="text-h3" style={{ fontSize: "1.25rem", marginBottom: 8 }}>
-                Isolated Multi-Tenant Architecture
-              </h3>
-              <p className="text-muted" style={{ fontSize: "0.875rem", lineHeight: 1.6, marginBottom: 16 }}>
-                Every shop is an isolated tenant. Customers scanning Shop A&apos;s QR code can only create orders for Shop A. Shop A can never access Shop B&apos;s customers, orders, files, or audit logs. Object-level authorization prevents IDOR.
-              </p>
-              <div className="badge badge-printing">Tenant Isolation Guaranteed</div>
-            </div>
-
-            {/* Pillar 4 */}
-            <div className="card">
-              <div style={{ padding: 12, borderRadius: "var(--radius-md)", background: "var(--badge-bg)", width: "fit-content", marginBottom: 16 }}>
-                <Clock size={24} style={{ color: "var(--warning)" }} />
-              </div>
-              <h3 className="text-h3" style={{ fontSize: "1.25rem", marginBottom: 8 }}>
-                Automatic Document Retention & Deletion
-              </h3>
-              <p className="text-muted" style={{ fontSize: "0.875rem", lineHeight: 1.6, marginBottom: 16 }}>
-                Uploaded customer files are ephemeral. Completed print jobs automatically delete customer documents from physical storage after 24 hours according to shop retention policy, protecting customer privacy.
-              </p>
-              <div className="badge badge-pending">Privacy-by-Design</div>
-            </div>
-
-            {/* Pillar 5 */}
-            <div className="card">
-              <div style={{ padding: 12, borderRadius: "var(--radius-md)", background: "var(--badge-bg)", width: "fit-content", marginBottom: 16 }}>
-                <QrCode size={24} style={{ color: "var(--text)" }} />
-              </div>
-              <h3 className="text-h3" style={{ fontSize: "1.25rem", marginBottom: 8 }}>
-                One-Click Counter Posters
-              </h3>
-              <p className="text-muted" style={{ fontSize: "0.875rem", lineHeight: 1.6, marginBottom: 16 }}>
-                Generate high-resolution vector QR posters directly from the dashboard. Print, laminate, and stick to your shop counter in 60 seconds with clear instructions for walk-in customers.
-              </p>
-              <div className="badge">Printable Vector SVG & PNG</div>
-            </div>
-
-            {/* Pillar 6 */}
-            <div className="card">
-              <div style={{ padding: 12, borderRadius: "var(--radius-md)", background: "var(--badge-bg)", width: "fit-content", marginBottom: 16 }}>
-                <FileText size={24} style={{ color: "#f59e0b" }} />
-              </div>
-              <h3 className="text-h3" style={{ fontSize: "1.25rem", marginBottom: 8 }}>
-                Dedicated Special Requirements
-              </h3>
-              <p className="text-muted" style={{ fontSize: "0.875rem", lineHeight: 1.6, marginBottom: 16 }}>
-                Multiline customer instructions preserved verbatim: &ldquo;Print pages 2-5 only. First page in color, rest B&W. Staple in top corner.&rdquo; Prominently displayed to shop operators to prevent printing mistakes.
-              </p>
-              <div className="badge">Per-File & Order-Level Notes</div>
-            </div>
+            <p className="text-muted" style={{ fontSize: "0.8125rem", margin: 0 }}>
+              Scan the poster at any shop counter with your phone camera to send documents directly to their queue.
+            </p>
           </div>
         </div>
-      </section>
+
+        {/* Subtle PWA Install Banner */}
+        {(!isInstalled && (canInstall || isIos)) && (
+          <div
+            style={{
+              padding: "14px 18px",
+              background: "var(--card)",
+              border: "1px solid var(--border)",
+              borderRadius: "var(--radius-md)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 12,
+              flexWrap: "wrap",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              <Download size={16} style={{ color: "var(--primary)" }} />
+              <span style={{ fontSize: "0.8125rem", color: "var(--text-muted)" }}>
+                Print faster next time. Install PrintFlow on your phone.
+              </span>
+            </div>
+
+            <button
+              type="button"
+              className="btn btn-secondary btn-sm"
+              onClick={() => {
+                if (isIos) {
+                  setShowIosGuide(true);
+                } else {
+                  promptInstall();
+                }
+              }}
+              style={{ fontSize: "0.75rem", padding: "6px 14px" }}
+            >
+              Install App
+            </button>
+          </div>
+        )}
+      </main>
 
       {/* Footer */}
-      <footer style={{ marginTop: "auto", borderTop: "1px solid var(--border)", padding: "32px 20px", textAlign: "center", fontSize: "0.8125rem", color: "var(--text-dim)" }}>
-        <div className="container">
-          <p>© 2026 PrintFlow SaaS. Production Multi-Tenant Platform for Local Xerox & Digital Print Shops.</p>
+      <footer
+        style={{
+          marginTop: "auto",
+          borderTop: "1px solid var(--border)",
+          padding: "24px 20px",
+          textAlign: "center",
+          fontSize: "0.8125rem",
+          color: "var(--text-dim)",
+          background: "var(--bg-subtle)",
+        }}
+      >
+        <div className="container" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", flexWrap: "wrap", gap: 12 }}>
+          <div>
+            <span>© 2026 PrintFlow. Fast, account-free document printing.</span>
+          </div>
+
+          <div style={{ display: "flex", gap: 16 }}>
+            <Link href="/print-centers" style={{ color: "var(--text-muted)" }}>
+              Print Centers
+            </Link>
+            <Link href="/login" style={{ color: "var(--text-muted)" }}>
+              Operator Terminal
+            </Link>
+            <Link href="/register" style={{ color: "var(--text-muted)" }}>
+              Register Shop
+            </Link>
+          </div>
         </div>
       </footer>
     </div>

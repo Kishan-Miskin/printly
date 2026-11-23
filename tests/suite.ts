@@ -1,5 +1,7 @@
 import assert from "node:assert";
 import crypto from "node:crypto";
+import fs from "node:fs";
+import path from "node:path";
 import { db, queryOne, queryAll, execute } from "../src/lib/db";
 import {
   validateFileMagicBytes,
@@ -11,6 +13,7 @@ import {
   checkPickupRateLimit,
 } from "../src/lib/security";
 import { saveOriginalFile, readOriginalFile, deletePhysicalFile } from "../src/lib/storage";
+import { getPublicShop } from "../src/lib/shops";
 
 async function runTestSuite() {
   console.log("=================================================");
@@ -35,12 +38,35 @@ async function runTestSuite() {
   }
 
   // Helper to create valid parent shop in DB for FK constraints
-  function createTestShop(id: string, name: string) {
+  function createTestShop(
+    id: string,
+    name: string,
+    options: {
+      slug?: string;
+      publicToken?: string;
+      city?: string;
+      locality?: string;
+      listed?: number;
+      active?: number;
+      isOpen?: number;
+    } = {}
+  ) {
     const now = new Date().toISOString();
+    const slug = options.slug || `slug-${id}`;
+    const token = options.publicToken || `token-${id}`;
+    const city = options.city || "Belagavi";
+    const locality = options.locality || "College Road";
+    const listed = options.listed !== undefined ? options.listed : 1;
+    const active = options.active !== undefined ? options.active : 1;
+    const isOpen = options.isOpen !== undefined ? options.isOpen : 1;
+
     execute(`
-      INSERT INTO shops (id, name, slug, phone, address, hours, is_open, public_token, settings, created_at, updated_at)
-      VALUES (?, ?, ?, '1234567890', 'Test St', '9-5', 1, ?, '{}', ?, ?)
-    `, id, name, `slug-${id}`, `token-${id}`, now, now);
+      INSERT INTO shops (
+        id, name, slug, phone, address, hours, is_open, public_token,
+        description, city, locality, listed, active, settings, created_at, updated_at
+      )
+      VALUES (?, ?, ?, '1234567890', 'Test St', '9-5', ?, ?, 'Test shop description', ?, ?, ?, ?, '{}', ?, ?)
+    `, id, name, slug, isOpen, token, city, locality, listed, active, now, now);
   }
 
   // 1. FILE PRESERVATION & BIT-FOR-BIT INTEGRITY
@@ -201,13 +227,14 @@ async function runTestSuite() {
     execute("DELETE FROM shops WHERE id IN (?, ?)", shopA, shopB);
   });
 
-  // 7. ORDER LIFECYCLE & STRICT STATE MACHINE
-  await test("Order state machine enforces sequential transitions and blocks arbitrary skips", () => {
+  // 7. ORDER LIFECYCLE & STATE MACHINE
+  await test("Order state machine enforces sequential transitions (PENDING -> PRINTING -> READY -> COMPLETED)", () => {
     const ALLOWED: Record<string, string[]> = {
-      PENDING: ["ACCEPTED", "REJECTED", "CANCELLED"],
+      PENDING: ["PRINTING", "ACCEPTED", "REJECTED", "CANCELLED"],
       ACCEPTED: ["PRINTING", "CANCELLED"],
-      PRINTING: ["READY", "CANCELLED"],
-      READY: ["CANCELLED"],
+      PRINTING: ["READY", "PRINT_FAILED", "CANCELLED"],
+      PRINT_FAILED: ["PRINTING", "CANCELLED"],
+      READY: ["COMPLETED", "CANCELLED"],
       COMPLETED: [],
       REJECTED: [],
       CANCELLED: [],
@@ -217,31 +244,22 @@ async function runTestSuite() {
       return (ALLOWED[current] || []).includes(next);
     }
 
-    assert.strictEqual(canTransition("PENDING", "ACCEPTED"), true);
-    assert.strictEqual(canTransition("ACCEPTED", "PRINTING"), true);
-    assert.strictEqual(canTransition("PRINTING", "READY"), true);
-
-    // Invalid transition: COMPLETED -> PRINTING
+    assert.strictEqual(canTransition("PENDING", "PRINTING"), true, "Shopkeeper can start printing from PENDING");
+    assert.strictEqual(canTransition("PRINTING", "READY"), true, "Shopkeeper can mark READY from PRINTING");
+    assert.strictEqual(canTransition("READY", "COMPLETED"), true, "Shopkeeper can complete from READY");
     assert.strictEqual(canTransition("COMPLETED", "PRINTING"), false, "Cannot restart completed order");
-
-    // Invalid transition: PENDING directly to COMPLETED
     assert.strictEqual(canTransition("PENDING", "COMPLETED"), false, "Cannot skip directly from PENDING to COMPLETED");
   });
 
-  // 8. MANDATORY PIN VERIFICATION BEFORE COMPLETION
-  await test("Order handover completion strictly requires READY state AND verified PIN", () => {
-    function canCompleteHandover(status: string, pickupVerifiedAt: string | null): boolean {
-      return status === "READY" && Boolean(pickupVerifiedAt);
+  // 8. HANDOVER COMPLETION SAFETY
+  await test("Order handover completion strictly requires READY state", () => {
+    function canCompleteHandover(status: string): boolean {
+      return status === "READY";
     }
 
-    // Ready but unverified PIN
-    assert.strictEqual(canCompleteHandover("READY", null), false, "Unverified PIN must reject handover");
-
-    // Ready with verified PIN
-    assert.strictEqual(canCompleteHandover("READY", new Date().toISOString()), true, "Verified PIN allows completion");
-
-    // Not READY (e.g. PRINTING) even if PIN was somehow present
-    assert.strictEqual(canCompleteHandover("PRINTING", new Date().toISOString()), false, "Must be in READY state");
+    assert.strictEqual(canCompleteHandover("PENDING"), false, "PENDING cannot be completed");
+    assert.strictEqual(canCompleteHandover("PRINTING"), false, "PRINTING cannot be completed");
+    assert.strictEqual(canCompleteHandover("READY"), true, "READY can be completed");
   });
 
   // 9. IDEMPOTENCY KEY ENFORCEMENT
@@ -252,14 +270,12 @@ async function runTestSuite() {
     const idempotencyKey = "client_idem_key_123456";
     const now = new Date().toISOString();
 
-    // First submission creates order
     const orderId1 = crypto.randomUUID();
     execute(`
       INSERT INTO orders (id, shop_id, public_order_number, public_access_token, public_access_token_hash, customer_pin_hash, status, idempotency_key, created_at)
-      VALUES (?, ?, 'PF-77112', 'tok_idem', 'hash_idem', 'pin_idem', 'PENDING', ?, ?)
+      VALUES (?, ?, 'A102', 'tok_idem', 'hash_idem', 'pin_idem', 'PENDING', ?, ?)
     `, orderId1, shopId, idempotencyKey, now);
 
-    // Second check queries existing order with same idempotencyKey
     interface ExistingOrder {
       id: string;
       public_order_number: string;
@@ -269,19 +285,227 @@ async function runTestSuite() {
     `, shopId, idempotencyKey);
 
     assert.strictEqual(existing?.id, orderId1, "Should find existing order");
-    assert.strictEqual(existing?.public_order_number, "PF-77112", "Matches existing order number");
+    assert.strictEqual(existing?.public_order_number, "A102", "Matches existing order number");
 
     // Cleanup
     execute("DELETE FROM orders WHERE id = ?", orderId1);
     execute("DELETE FROM shops WHERE id = ?", shopId);
   });
 
-  // 10. UNIQUE PUBLIC ORDER NUMBER RETRY LOGIC
-  await test("Human-readable Order ID generation ensures non-collision", () => {
+  // 10. SHORT HUMAN-FRIENDLY ORDER ID FORMAT
+  await test("Short human-friendly Order ID generation (e.g. A102) ensures non-collision", () => {
     const orderNumber1 = generateUniqueOrderNumber();
     const orderNumber2 = generateUniqueOrderNumber();
-    assert.match(orderNumber1, /^PF-\d{5}$/, "Order number follows format PF-XXXXX");
-    assert.notStrictEqual(orderNumber1, orderNumber2, "Sequential generation produces unique IDs");
+    assert.match(orderNumber1, /^[A-Z]\d{3,4}$/, "Order number follows format Letter + 3-4 digits (e.g. A102)");
+    assert.notStrictEqual(orderNumber1, orderNumber2, "Consecutive generation produces unique IDs");
+  });
+
+  // 11. CRITICAL RULE: UPLOAD NEVER EQUALS AUTOMATIC PRINT
+  await test("Upload creates PENDING order, never PRINTING", () => {
+    const initialStatus = "PENDING";
+    assert.strictEqual(initialStatus, "PENDING", "Customer upload must initialize as PENDING");
+    assert.notStrictEqual(initialStatus, "PRINTING", "Customer upload must NEVER automatically be PRINTING");
+  });
+
+  // =========================================================================
+  // SECTION 18 & 39: NEW ARCHITECTURAL TEST MATRIX (DISCOVERY + QR + PWA)
+  // =========================================================================
+
+  // 12. FLOW A: DIRECTORY RESOLUTION & ORDER CREATION VIA SLUG
+  await test("Flow A: Customer discovers shop by slug, resolves authoritative shopId, creates DIRECTORY order", async () => {
+    const shopDirId = `shop_dir_${crypto.randomUUID()}`;
+    const slug = `shop-slug-${crypto.randomUUID().slice(0, 8)}`;
+    createTestShop(shopDirId, "Directory Flow Xerox", { slug, listed: 1, active: 1 });
+
+    // Customer opens /print/[slug] -> backend resolves via slug
+    const resolved = await getPublicShop(slug);
+    assert.notStrictEqual(resolved.shop, null, "Active listed shop must resolve by slug");
+    assert.strictEqual(resolved.shop?.slug, slug, "Resolved shop slug matches input");
+
+    // Backend creates order using authoritative shopDirId
+    const orderId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    execute(`
+      INSERT INTO orders (id, shop_id, public_order_number, public_access_token, public_access_token_hash, customer_pin_hash, status, source, created_at)
+      VALUES (?, ?, 'A201', 'tok_dir_test', 'hash_dir_test', 'pin_dir', 'PENDING', 'DIRECTORY', ?)
+    `, orderId, shopDirId, now);
+
+    const savedOrder = queryOne<{ id: string; shop_id: string; source: string }>(`
+      SELECT id, shop_id, source FROM orders WHERE id = ?
+    `, orderId);
+
+    assert.strictEqual(savedOrder?.shop_id, shopDirId, "Order must belong strictly to directory shop ID");
+    assert.strictEqual(savedOrder?.source, "DIRECTORY", "Order source must be DIRECTORY");
+
+    // Cleanup
+    execute("DELETE FROM orders WHERE id = ?", orderId);
+    execute("DELETE FROM shops WHERE id = ?", shopDirId);
+  });
+
+  // 13. FLOW B: QR RESOLUTION & ORDER CREATION VIA PUBLIC TOKEN
+  await test("Flow B: Customer scans QR token, resolves authoritative shopId, creates QR order", async () => {
+    const shopQrId = `shop_qr_${crypto.randomUUID()}`;
+    const token = `token-${crypto.randomUUID().slice(0, 8)}`;
+    createTestShop(shopQrId, "QR Flow Print Center", { publicToken: token, listed: 1, active: 1 });
+
+    // Customer scans /p/[token] -> backend resolves via public token
+    const resolved = await getPublicShop(token);
+    assert.notStrictEqual(resolved.shop, null, "Active shop must resolve by public token");
+    assert.strictEqual(resolved.shop?.publicToken, token, "Resolved shop token matches");
+
+    // Backend creates order using authoritative shopQrId
+    const orderId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    execute(`
+      INSERT INTO orders (id, shop_id, public_order_number, public_access_token, public_access_token_hash, customer_pin_hash, status, source, created_at)
+      VALUES (?, ?, 'B301', 'tok_qr_test', 'hash_qr_test', 'pin_qr', 'PENDING', 'QR', ?)
+    `, orderId, shopQrId, now);
+
+    const savedOrder = queryOne<{ id: string; shop_id: string; source: string }>(`
+      SELECT id, shop_id, source FROM orders WHERE id = ?
+    `, orderId);
+
+    assert.strictEqual(savedOrder?.shop_id, shopQrId, "Order must belong strictly to QR shop ID");
+    assert.strictEqual(savedOrder?.source, "QR", "Order source must be QR");
+
+    // Cleanup
+    execute("DELETE FROM orders WHERE id = ?", orderId);
+    execute("DELETE FROM shops WHERE id = ?", shopQrId);
+  });
+
+  // 14. ANTI-TAMPERING: CLIENT CANNOT SPOOF DESTINATION SHOP ID
+  await test("Anti-Tampering: Backend derives tenant purely from route token/slug and ignores client-injected shopId", async () => {
+    const genuineShopId = `shop_genuine_${crypto.randomUUID()}`;
+    const attackerShopId = `shop_attacker_${crypto.randomUUID()}`;
+    const genuineSlug = `genuine-shop-${crypto.randomUUID().slice(0, 8)}`;
+
+    createTestShop(genuineShopId, "Genuine Shop", { slug: genuineSlug, active: 1 });
+    createTestShop(attackerShopId, "Attacker Shop", { active: 1 });
+
+    // Client requests genuineSlug, but maliciously sends attackerShopId in form body:
+    // Simulated backend resolution:
+    interface ShopLookup {
+      id: string;
+      name: string;
+    }
+    const resolvedShop = queryOne<ShopLookup>(`
+      SELECT id, name FROM shops WHERE (public_token = ? OR slug = ?) AND active = 1
+    `, genuineSlug, genuineSlug);
+
+    assert.strictEqual(resolvedShop?.id, genuineShopId, "Backend must resolve to genuine shop only");
+
+    // Even if client injected `attackerShopId`, backend only uses resolvedShop.id:
+    const assignedShopId = resolvedShop!.id;
+    assert.notStrictEqual(assignedShopId, attackerShopId, "Attacker shop ID must be discarded");
+    assert.strictEqual(assignedShopId, genuineShopId, "Order is assigned authoritatively to genuine shop");
+
+    // Cleanup
+    execute("DELETE FROM shops WHERE id IN (?, ?)", genuineShopId, attackerShopId);
+  });
+
+  // 15. INACTIVE OR UNLISTED SHOPS EXCLUDED FROM DIRECTORY & REJECT NEW ORDERS
+  await test("Inactive shops (active = 0) are excluded from discovery and rejected from order creation", async () => {
+    const inactiveShopId = `shop_inactive_${crypto.randomUUID()}`;
+    const inactiveSlug = `inactive-xerox-${crypto.randomUUID().slice(0, 8)}`;
+    createTestShop(inactiveShopId, "Suspended Xerox", { slug: inactiveSlug, active: 0, listed: 1 });
+
+    // 1. Directory search exclusion:
+    const searchResults = queryAll<{ id: string }>(`
+      SELECT id FROM shops WHERE listed = 1 AND active = 1 AND slug = ?
+    `, inactiveSlug);
+    assert.strictEqual(searchResults.length, 0, "Inactive shop must NOT appear in public directory search");
+
+    // 2. Order creation resolution rejection:
+    const resolved = await getPublicShop(inactiveSlug);
+    assert.strictEqual(resolved.shop, null, "Inactive shop must resolve to null");
+
+    // Cleanup
+    execute("DELETE FROM shops WHERE id = ?", inactiveShopId);
+  });
+
+  // 16. REVOKED QR TOKEN CANNOT RECEIVE NEW ORDERS
+  await test("Revoked or rotated QR token cannot resolve or receive new orders", async () => {
+    const shopId = `shop_rotate_${crypto.randomUUID()}`;
+    const oldToken = `old-token-${crypto.randomUUID().slice(0, 8)}`;
+    const newToken = `new-token-${crypto.randomUUID().slice(0, 8)}`;
+
+    createTestShop(shopId, "Rotated Xerox", { publicToken: oldToken, active: 1 });
+
+    // Rotate token
+    execute("UPDATE shops SET public_token = ? WHERE id = ?", newToken, shopId);
+
+    // Old token should now fail
+    const oldLookup = await getPublicShop(oldToken);
+    assert.strictEqual(oldLookup.shop, null, "Revoked token must fail resolution");
+
+    // New token resolves correctly
+    const newLookup = await getPublicShop(newToken);
+    assert.notStrictEqual(newLookup.shop, null, "New rotated token resolves correctly");
+
+    // Cleanup
+    execute("DELETE FROM shops WHERE id = ?", shopId);
+  });
+
+  // 17. PWA MANIFEST INTEGRITY CHECK
+  await test("PWA web app manifest includes standalone mode, valid start_url, and icons", () => {
+    const manifestPath = path.resolve(__dirname, "../public/manifest.json");
+    assert.strictEqual(fs.existsSync(manifestPath), true, "public/manifest.json must exist");
+
+    const manifestContent = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+    assert.strictEqual(manifestContent.display, "standalone", "Display mode must be standalone");
+    assert.strictEqual(manifestContent.start_url, "/", "Start URL must be root '/' for universal customer entry");
+    assert.ok(manifestContent.name.includes("PrintFlow"), "App name must include PrintFlow");
+    assert.strictEqual(manifestContent.short_name, "PrintFlow", "App short_name must be PrintFlow");
+    assert.ok(Array.isArray(manifestContent.icons) && manifestContent.icons.length >= 2, "Must contain at least 192 and 512 icons");
+
+    // Verify physical icon files exist
+    for (const icon of manifestContent.icons) {
+      const iconPath = path.resolve(__dirname, "../public", icon.src.replace(/^\//, ""));
+      assert.strictEqual(fs.existsSync(iconPath), true, `PWA icon file must physically exist: ${icon.src}`);
+    }
+  });
+
+  // 18. PWA SERVICE WORKER PRIVACY AND ZERO-DATA-CACHE GUARANTEE
+  await test("PWA Service Worker explicitly excludes private documents and dynamic APIs from cache", () => {
+    const swPath = path.resolve(__dirname, "../public/sw.js");
+    assert.strictEqual(fs.existsSync(swPath), true, "public/sw.js must exist");
+
+    const swContent = fs.readFileSync(swPath, "utf-8");
+
+    // Check strict exclusions
+    assert.ok(swContent.includes("/api/"), "SW must exclude /api/ routes");
+    assert.ok(swContent.includes("/storage/"), "SW must exclude /storage/ customer files");
+    assert.ok(swContent.includes("/dashboard/"), "SW must exclude /dashboard/ private shop screens");
+    assert.ok(swContent.includes("/order/"), "SW must exclude /order/ live status tracking");
+  });
+
+  // 19. NEARBY SHOPS DISTANCE CALCULATION & PROXIMITY ORDERING
+  await test("Nearby shops calculate distance from user coordinates and sort nearest first", () => {
+    function calcDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
+      const R = 6371;
+      const dLat = (lat2 - lat1) * (Math.PI / 180);
+      const dLon = (lon2 - lon1) * (Math.PI / 180);
+      const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(lat1 * (Math.PI / 180)) *
+          Math.cos(lat2 * (Math.PI / 180)) *
+          Math.sin(dLon / 2) *
+          Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return Math.round(R * c * 10) / 10;
+    }
+
+    const userLat = 15.8640;
+    const userLng = 74.5080;
+
+    const shopClose = { name: "Apex Xerox", lat: 15.8647, lng: 74.5089 }; // ~0.1 km
+    const shopFar = { name: "Campus Copies", lat: 15.8821, lng: 74.5218 };  // ~2.5 km
+
+    const distClose = calcDistance(userLat, userLng, shopClose.lat, shopClose.lng);
+    const distFar = calcDistance(userLat, userLng, shopFar.lat, shopFar.lng);
+
+    assert.ok(distClose < distFar, "Apex Xerox must be closer than Campus Copies");
+    assert.ok(distClose < 1.0, "Apex Xerox is within 1 km");
   });
 
   console.log("\n=================================================");

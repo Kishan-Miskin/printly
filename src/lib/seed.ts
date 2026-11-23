@@ -4,23 +4,36 @@ import { db } from "./db";
 import { saveOriginalFile } from "./storage";
 
 export async function ensureSeedData() {
-  const existingUser = db.prepare("SELECT id FROM users WHERE email = ?").get("owner@demo-xerox.com");
-  if (existingUser) {
-    return; // Already seeded
-  }
-
-  const userId = crypto.randomUUID();
-  const shopId = crypto.randomUUID();
   const now = new Date().toISOString();
-  const passwordHash = await bcrypt.hash("Password123!", 10);
 
-  // 1. Insert Owner User
-  db.prepare(`
-    INSERT INTO users (id, email, password_hash, name, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(userId, "owner@demo-xerox.com", passwordHash, "Rajesh Sharma", now, now);
+  // Always ensure shops have discovery metadata and coordinates populated
+  try {
+    db.prepare(`
+      UPDATE shops 
+      SET description = 'High-speed digital printing, color xerox, thesis binding & lamination.',
+          city = 'Belagavi',
+          locality = 'College Road',
+          latitude = 15.8647,
+          longitude = 74.5089,
+          listed = 1,
+          active = 1
+      WHERE slug = 'apex-xerox'
+    `).run();
 
-  // 2. Insert Shop
+    db.prepare(`
+      UPDATE shops 
+      SET latitude = 15.8524, longitude = 74.5042
+      WHERE slug = 'city-prints'
+    `).run();
+
+    db.prepare(`
+      UPDATE shops 
+      SET latitude = 15.8821, longitude = 74.5218
+      WHERE slug = 'campus-copies'
+    `).run();
+  } catch {}
+
+  // 1. Ensure Secondary Print Centers for Discovery
   const defaultSettings = JSON.stringify({
     retention_hours: 24,
     auto_accept: false,
@@ -29,9 +42,85 @@ export async function ensureSeedData() {
     allowed_formats: ["pdf", "jpg", "jpeg", "png", "docx"],
   });
 
+  const existingCityPrints = db.prepare("SELECT id FROM shops WHERE slug = ?").get("city-prints");
+  if (!existingCityPrints) {
+    const cityShopId = crypto.randomUUID();
+    db.prepare(`
+      INSERT INTO shops (id, name, slug, phone, address, hours, is_open, public_token, settings, description, city, locality, listed, active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      cityShopId,
+      "City Prints & Xerox Hub",
+      "city-prints",
+      "+91 98450 11223",
+      "Shop 12, Market Main Road, Near Central Bus Stand",
+      "8:30 AM - 9:30 PM (Mon-Sun)",
+      1,
+      "city-prints-hub",
+      defaultSettings,
+      "Fast document printing, color xerox, engineering drawings & lamination.",
+      "Belagavi",
+      "Market Circle",
+      1,
+      1,
+      now,
+      now
+    );
+    db.prepare(`
+      INSERT INTO shop_qr_codes (id, shop_id, token, is_active, created_at)
+      VALUES (?, ?, ?, 1, ?)
+    `).run(crypto.randomUUID(), cityShopId, "city-prints-hub", now);
+  }
+
+  const existingCampus = db.prepare("SELECT id FROM shops WHERE slug = ?").get("campus-copies");
+  if (!existingCampus) {
+    const campusShopId = crypto.randomUUID();
+    db.prepare(`
+      INSERT INTO shops (id, name, slug, phone, address, hours, is_open, public_token, settings, description, city, locality, listed, active, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      campusShopId,
+      "Campus Digital Copies",
+      "campus-copies",
+      "+91 94480 33445",
+      "Opposite University Gate 2, Campus Road",
+      "9:00 AM - 8:00 PM (Mon-Sat)",
+      1,
+      "campus-copies-vt",
+      defaultSettings,
+      "Affordable student printouts, assignment copies, thesis & spiral binding.",
+      "Belagavi",
+      "University Campus",
+      1,
+      1,
+      now,
+      now
+    );
+    db.prepare(`
+      INSERT INTO shop_qr_codes (id, shop_id, token, is_active, created_at)
+      VALUES (?, ?, ?, 1, ?)
+    `).run(crypto.randomUUID(), campusShopId, "campus-copies-vt", now);
+  }
+
+  const existingUser = db.prepare("SELECT id FROM users WHERE email = ?").get("owner@demo-xerox.com");
+  if (existingUser) {
+    return; // Already seeded
+  }
+
+  const userId = crypto.randomUUID();
+  const shopId = crypto.randomUUID();
+  const passwordHash = await bcrypt.hash("Password123!", 10);
+
+  // Insert Owner User
   db.prepare(`
-    INSERT INTO shops (id, name, slug, phone, address, hours, is_open, public_token, settings, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO users (id, email, password_hash, name, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `).run(userId, "owner@demo-xerox.com", passwordHash, "Rajesh Sharma", now, now);
+
+  // Insert Primary Shop
+  db.prepare(`
+    INSERT INTO shops (id, name, slug, phone, address, hours, is_open, public_token, settings, description, city, locality, listed, active, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     shopId,
     "Apex Xerox & Digital Prints",
@@ -42,17 +131,22 @@ export async function ensureSeedData() {
     1,
     "apex-prints-demo",
     defaultSettings,
+    "High-speed digital printing, color xerox, thesis binding & lamination.",
+    "Belagavi",
+    "College Road",
+    1,
+    1,
     now,
     now
   );
 
-  // 3. Shop Member (Owner)
+  // Shop Member (Owner)
   db.prepare(`
     INSERT INTO shop_members (id, shop_id, user_id, role, created_at)
     VALUES (?, ?, ?, ?, ?)
   `).run(crypto.randomUUID(), shopId, userId, "SHOP_OWNER", now);
 
-  // 4. Shop QR Code record
+  // Shop QR Code record
   db.prepare(`
     INSERT INTO shop_qr_codes (id, shop_id, token, is_active, created_at)
     VALUES (?, ?, ?, ?, ?)

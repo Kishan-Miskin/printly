@@ -4,12 +4,14 @@ import { requireShopAuth } from "@/lib/auth";
 import { OrderStatusUpdateSchema } from "@/lib/validation";
 import { logAuditEvent } from "@/lib/security";
 
-// Strict allowed transition map
+// Strict allowed transition map matching canonical workflow:
+// PENDING -> PRINTING -> READY -> COMPLETED
 const ALLOWED_TRANSITIONS: Record<string, string[]> = {
-  PENDING: ["ACCEPTED", "REJECTED", "CANCELLED"],
+  PENDING: ["PRINTING", "ACCEPTED", "REJECTED", "CANCELLED"],
   ACCEPTED: ["PRINTING", "CANCELLED"],
-  PRINTING: ["READY", "CANCELLED"],
-  READY: ["CANCELLED"], // NOTE: READY -> COMPLETED is handled exclusively by /complete endpoint after PIN verification
+  PRINTING: ["READY", "PRINT_FAILED", "CANCELLED"],
+  PRINT_FAILED: ["PRINTING", "CANCELLED"],
+  READY: ["COMPLETED", "CANCELLED"],
   COMPLETED: [], // Terminal state
   REJECTED: [],  // Terminal state
   CANCELLED: [], // Terminal state
@@ -60,14 +62,26 @@ export async function PATCH(
     }
 
     const now = new Date().toISOString();
-    let timestampField = "";
+    let sql = "";
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let params: any[] = [];
 
-    if (nextStatus === "ACCEPTED") timestampField = ", accepted_at = ?";
-    else if (nextStatus === "PRINTING") timestampField = ", printing_at = ?";
-    else if (nextStatus === "READY") timestampField = ", ready_at = ?";
-
-    const sql = `UPDATE orders SET status = ? ${timestampField} WHERE id = ? AND shop_id = ?`;
-    const params = timestampField ? [nextStatus, now, id, auth.shop.id] : [nextStatus, id, auth.shop.id];
+    if (nextStatus === "ACCEPTED") {
+      sql = "UPDATE orders SET status = ?, accepted_at = ? WHERE id = ? AND shop_id = ?";
+      params = [nextStatus, now, id, auth.shop.id];
+    } else if (nextStatus === "PRINTING") {
+      sql = "UPDATE orders SET status = ?, printing_at = ? WHERE id = ? AND shop_id = ?";
+      params = [nextStatus, now, id, auth.shop.id];
+    } else if (nextStatus === "READY") {
+      sql = "UPDATE orders SET status = ?, ready_at = ? WHERE id = ? AND shop_id = ?";
+      params = [nextStatus, now, id, auth.shop.id];
+    } else if (nextStatus === "COMPLETED") {
+      sql = "UPDATE orders SET status = ?, completed_at = ?, completed_by_user_id = ? WHERE id = ? AND shop_id = ?";
+      params = [nextStatus, now, auth.user.id, id, auth.shop.id];
+    } else {
+      sql = "UPDATE orders SET status = ? WHERE id = ? AND shop_id = ?";
+      params = [nextStatus, id, auth.shop.id];
+    }
 
     db.prepare(sql).run(...params);
 

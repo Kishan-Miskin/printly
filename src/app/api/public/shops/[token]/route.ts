@@ -28,11 +28,11 @@ export async function GET(
     const shop = db.prepare(`
       SELECT id, name, phone, address, hours, is_open, public_token, settings
       FROM shops
-      WHERE public_token = ?
-    `).get(token) as PublicShopRow | undefined;
+      WHERE (public_token = ? OR slug = ?) AND active = 1
+    `).get(token, token) as PublicShopRow | undefined;
 
     if (!shop) {
-      return NextResponse.json({ error: "Shop not found or invalid QR code" }, { status: 404 });
+      return NextResponse.json({ error: "Print center not found or currently unavailable" }, { status: 404 });
     }
 
     let parsedSettings = {

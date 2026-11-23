@@ -30,11 +30,11 @@ export async function POST(
     const shop = db.prepare(`
       SELECT id, name, is_open, settings
       FROM shops
-      WHERE public_token = ?
-    `).get(token) as ShopRow | undefined;
+      WHERE (public_token = ? OR slug = ?) AND active = 1
+    `).get(token, token) as ShopRow | undefined;
 
     if (!shop) {
-      return NextResponse.json({ error: "Shop not found" }, { status: 404 });
+      return NextResponse.json({ error: "Print center not found or currently unavailable" }, { status: 404 });
     }
 
     if (shop.is_open !== 1) {
@@ -86,6 +86,7 @@ export async function POST(
     const customerName = ((formData.get("customerName") as string) || "").trim();
     const customerPhone = ((formData.get("customerPhone") as string) || "").trim();
     const customerRequirements = ((formData.get("customerRequirements") as string) || "").trim();
+    const orderSource = (formData.get("source") as string) === "DIRECTORY" ? "DIRECTORY" : "QR";
 
     // Extract files
     const fileEntries = formData.getAll("files") as File[];
@@ -230,8 +231,8 @@ export async function POST(
         INSERT INTO orders (
           id, shop_id, public_order_number, public_access_token, public_access_token_hash,
           customer_name, customer_phone, customer_pin_hash, customer_requirements,
-          status, idempotency_key, created_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?)
+          status, source, idempotency_key, created_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'PENDING', ?, ?, ?)
       `).run(
         orderId,
         shop.id,
@@ -242,6 +243,7 @@ export async function POST(
         customerPhone || null,
         customerPinHash,
         customerRequirements || null,
+        orderSource,
         idempotencyKey,
         now
       );

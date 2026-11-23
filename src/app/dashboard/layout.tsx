@@ -18,6 +18,7 @@ import {
   ShieldCheck,
   CheckCircle2,
 } from "lucide-react";
+import { ThemeToggle } from "@/components/ThemeManager";
 
 interface AuthState {
   user: { id: string; name: string; email: string };
@@ -72,10 +73,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   if (!auth) return null;
 
   const navItems = [
-    { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
-    { href: "/dashboard/orders", label: "Orders", icon: Printer },
-    { href: "/dashboard/verify", label: "Verify Pickup", icon: ShieldCheck, highlight: true },
-    { href: "/dashboard/qr", label: "Counter QR & Poster", icon: QrCode },
+    { href: "/dashboard", label: "Print Queue", icon: Printer },
+    { href: "/dashboard/qr", label: "Shop Link & Poster", icon: QrCode },
     { href: "/dashboard/settings", label: "Settings", icon: Settings },
     { href: "/dashboard/staff", label: "Staff", icon: Users },
     { href: "/dashboard/security", label: "Security & Audit", icon: ShieldAlert },
@@ -144,28 +143,18 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   <Icon size={18} style={{ color: active ? "var(--primary)" : "var(--text-dim)" }} />
                   <span>{item.label}</span>
                 </div>
-                {item.highlight && (
-                  <span
-                    style={{
-                      fontSize: "0.6875rem",
-                      fontWeight: 700,
-                      background: "var(--success-bg)",
-                      color: "var(--success)",
-                      padding: "2px 6px",
-                      borderRadius: 4,
-                      border: "1px solid var(--success-border)",
-                    }}
-                  >
-                    PIN
-                  </span>
-                )}
               </a>
             );
           })}
         </nav>
 
-        {/* Public QR Link Quick Access */}
-        <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border)" }}>
+        {/* Theme & Public QR Link Quick Access */}
+        <div style={{ padding: "12px 16px", borderTop: "1px solid var(--border)", display: "flex", flexDirection: "column", gap: 8 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+            <span style={{ fontSize: "0.75rem", color: "var(--text-dim)", fontWeight: 600 }}>Theme</span>
+            <ThemeToggle />
+          </div>
+
           <a
             href={`/p/${auth.shop.public_token}`}
             target="_blank"
@@ -176,7 +165,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               justifyContent: "space-between",
               padding: "8px 12px",
               borderRadius: "var(--radius-sm)",
-              background: "rgba(255, 255, 255, 0.03)",
+              background: "var(--bg-subtle)",
               border: "1px solid var(--border)",
               fontSize: "0.75rem",
               color: "var(--text-muted)",

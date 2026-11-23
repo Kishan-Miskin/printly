@@ -45,7 +45,7 @@ export const PickupVerifySchema = z.object({
 });
 
 export const OrderStatusUpdateSchema = z.object({
-  status: z.enum(["ACCEPTED", "PRINTING", "READY", "REJECTED", "CANCELLED"]),
+  status: z.enum(["ACCEPTED", "PRINTING", "READY", "COMPLETED", "REJECTED", "CANCELLED", "PRINT_FAILED"]),
 });
 
 export const InviteStaffSchema = z.object({

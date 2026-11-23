@@ -30,7 +30,7 @@ export async function POST(
       return NextResponse.json({ error: "Order not found" }, { status: 404 });
     }
 
-    // Strict Handover Business Rules
+    // Strict Handover Business Rules: Must be in READY state
     if (order.status !== "READY") {
       return NextResponse.json(
         { error: `Cannot complete order: Current status is ${order.status}. Order must be in READY state before handover.` },
@@ -38,23 +38,31 @@ export async function POST(
       );
     }
 
-    if (!order.pickup_verified_at) {
-      return NextResponse.json(
-        {
-          error: "Handover denied: Customer Pickup PIN has NOT been verified. The 6-digit PIN must be verified at the counter before completing the order.",
-          requiresPinVerification: true,
-        },
-        { status: 403 }
-      );
+    // Optional PIN verification if provided in request body
+    let bodyPin: string | null = null;
+    try {
+      const body = await request.json();
+      bodyPin = body?.pin || null;
+    } catch {
+      // No JSON body provided
+    }
+
+    if (bodyPin) {
+      const orderFull = db.prepare("SELECT customer_pin_hash FROM orders WHERE id = ?").get(order.id) as { customer_pin_hash: string } | undefined;
+      const { verifyPin } = await import("@/lib/security");
+      const isValid = orderFull ? await verifyPin(bodyPin, orderFull.customer_pin_hash) : false;
+      if (!isValid) {
+        return NextResponse.json({ error: "Invalid Pickup PIN provided." }, { status: 400 });
+      }
     }
 
     const now = new Date().toISOString();
 
     db.prepare(`
       UPDATE orders
-      SET status = 'COMPLETED', completed_at = ?, completed_by_user_id = ?
+      SET status = 'COMPLETED', completed_at = ?, completed_by_user_id = ?, pickup_verified_at = COALESCE(pickup_verified_at, ?)
       WHERE id = ? AND shop_id = ?
-    `).run(now, auth.user.id, order.id, auth.shop.id);
+    `).run(now, auth.user.id, now, order.id, auth.shop.id);
 
     logAuditEvent({
       shopId: auth.shop.id,

@@ -40,6 +40,43 @@ export async function GET(request: Request) {
 
     const rows = queryAll(sql, ...params);
 
+    // Attach file details to each order for immediate shopkeeper queue display
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const orderIds = rows.map((r: any) => r.id);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const filesByOrder: Record<string, any[]> = {};
+    if (orderIds.length > 0) {
+      const placeholders = orderIds.map(() => "?").join(",");
+      const allFiles = queryAll(`
+        SELECT id, order_id, original_filename, mime_type, size_bytes, print_color, paper_size, duplex, copies, customer_requirements
+        FROM order_files
+        WHERE order_id IN (${placeholders}) AND status = 'ACTIVE'
+      `, ...orderIds);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const f of allFiles as any[]) {
+        if (!filesByOrder[f.order_id]) filesByOrder[f.order_id] = [];
+        filesByOrder[f.order_id].push({
+          id: f.id,
+          originalFilename: f.original_filename,
+          mimeType: f.mime_type,
+          sizeBytes: f.size_bytes,
+          printColor: f.print_color,
+          paperSize: f.paper_size,
+          duplex: f.duplex,
+          copies: f.copies,
+          requirements: f.customer_requirements,
+          downloadUrl: `/api/orders/${f.order_id}/files/${f.id}/download`,
+          previewUrl: `/api/orders/${f.order_id}/files/${f.id}/preview`,
+        });
+      }
+    }
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const ordersWithFiles = rows.map((r: any) => ({
+      ...r,
+      files: filesByOrder[r.id] || [],
+    }));
+
     // Also get quick status count summaries for the dashboard tabs
     interface CountRow {
       status: string;
@@ -69,7 +106,7 @@ export async function GET(request: Request) {
     });
 
     return NextResponse.json({
-      orders: rows,
+      orders: ordersWithFiles,
       counts: statusCounts,
     });
   } catch (err: unknown) {

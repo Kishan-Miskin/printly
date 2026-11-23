@@ -82,19 +82,23 @@ export function calculateSha256(buffer: Buffer): string {
 }
 
 /**
- * Generates unique human-readable public Order ID (e.g. PF-48291)
- * Guaranteed unique in orders table
+ * Generates unique short human-friendly public Order ID (e.g. A102, B205)
+ * Guaranteed unique in active orders table
  */
 export function generateUniqueOrderNumber(): string {
-  for (let attempt = 0; attempt < 20; attempt++) {
-    const num = crypto.randomInt(10000, 99999);
-    const orderNumber = `PF-${num}`;
+  const letters = "ABCDEFGHJKLMNPQRSTUVWXYZ"; // exclude easily confused I, O
+  for (let attempt = 0; attempt < 30; attempt++) {
+    const letter = letters[crypto.randomInt(0, letters.length)];
+    const num = crypto.randomInt(101, 999);
+    const orderNumber = `${letter}${num}`;
     const existing = queryOne("SELECT 1 FROM orders WHERE public_order_number = ?", orderNumber);
     if (!existing) {
       return orderNumber;
     }
   }
-  return `PF-${Date.now().toString().slice(-5)}`;
+  // Fallback if collision
+  const letter = letters[crypto.randomInt(0, letters.length)];
+  return `${letter}${Date.now().toString().slice(-4)}`;
 }
 
 /**
