@@ -24,9 +24,6 @@ npm run build
 
 ### Pre-Seeded Demo Credentials
 - **Shop Terminal URL**: [http://localhost:3000/login](http://localhost:3000/login)
-  - **Operator Email**: `owner@demo-xerox.com`
-  - **Password**: `Password123!`
-  - *(One-click Auto-Fill button available on login screen)*
 - **Demo Customer Counter Scan Link**: [http://localhost:3000/p/apex-prints-demo](http://localhost:3000/p/apex-prints-demo)
 - **Sample Pre-Seeded Ready Order**: `PF-48291` (Pickup PIN: `739284`)
 
